@@ -1,0 +1,449 @@
+---
+title: "NonHumanVocalExchanges"
+author: "Chris Cox"
+date: "2025-12-04"
+output: pdf_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+# Initialisation
+p_load(rstan, 
+       bayesplot, 
+       ggplot2, 
+       coda, 
+       circular, 
+       moveHMM, 
+       tidyr, 
+       dplyr, 
+       patchwork, 
+       CircStats,
+       deSolve,
+       rstan)
+```
+
+# Data Simulation
+
+```{r}
+# ============================================================================
+# DISTINGUISHING MECHANISMS: Two Paths to the Same Pattern
+# ============================================================================
+# This code demonstrates that alternating vocalizations can emerge from
+# fundamentally different mechanisms:
+# 1. REACTIVE RESET: Discrete phase adjustments triggered by partner's calls
+# 2. GRADUAL ENTRAINMENT: Continuous mutual frequency adaptation
+#
+# Key insight: These look similar superficially but have different signatures
+# that formal models can detect and distinguish.
+# ============================================================================
+
+# Set seed for reproducibility
+set.seed(42)
+
+# Common parameters
+simulation_time <- 100  # seconds
+dt <- 0.01              # time step
+
+
+# ============================================================================
+# MECHANISM 1: REACTIVE RESET MODEL (Insect/Anuran Literature)
+# ============================================================================
+# How it works:
+# - Each individual has an internal oscillator that accumulates phase
+# - When hearing partner's call, immediately RESET or DELAY own phase
+# - This is event-triggered, discrete adjustment
+# - Common in katydid, cricket, frog chorusing models
+
+simulate_reactive_reset <- function(duration = 100, 
+                                   dt = 0.01,
+                                   freq1 = 1.0,      # Natural frequency individual 1
+                                   freq2 = 1.0,     # Natural frequency individual 2
+                                   reset_strength = 0.5) {  # How much to delay when hearing call
+  
+  times <- seq(0, duration, by = dt)
+  n_steps <- length(times)
+  
+  # Initialize phase and vocalization tracking
+  phase1 <- runif(1, 0, 2*pi)
+  phase2 <- runif(1, 0, 2*pi)
+  
+  voc_threshold <- 2*pi - 0.1  # Call when phase reaches threshold
+  
+  # Storage
+  phases1 <- numeric(n_steps)
+  phases2 <- numeric(n_steps)
+  voc_times_1 <- c()
+  voc_times_2 <- c()
+  
+  for (i in 1:n_steps) {
+    # Store current phases
+    phases1[i] <- phase1
+    phases2[i] <- phase2
+    
+    # Check if individual 1 should vocalize
+    if (phase1 >= voc_threshold) {
+      voc_times_1 <- c(voc_times_1, times[i])
+      phase1 <- 0  # Reset own phase after calling
+      
+      # REACTIVE MECHANISM: Individual 2 hears this and delays
+      # If individual 2 is in vulnerable phase (would call soon), delay it
+      if (phase2 > pi) {  # Only respond if past halfway point
+        phase2 <- phase2 - reset_strength  # Push back phase
+      }
+    }
+    
+    # Check if individual 2 should vocalize
+    if (phase2 >= voc_threshold) {
+      voc_times_2 <- c(voc_times_2, times[i])
+      phase2 <- 0  # Reset own phase after calling
+      
+      # REACTIVE MECHANISM: Individual 1 hears this and delays
+      if (phase1 > pi) {
+        phase1 <- phase1 - reset_strength
+      }
+    }
+    
+    # Phase accumulation at natural frequencies
+    phase1 <- phase1 + 2*pi * freq1 * dt
+    phase2 <- phase2 + 2*pi * freq2 * dt
+    
+    # Keep phases in [0, 2*pi] range
+    phase1 <- phase1 %% (2*pi)
+    phase2 <- phase2 %% (2*pi)
+  }
+  
+  return(list(
+    mechanism = "Reactive Reset",
+    times = times,
+    phases1 = phases1,
+    phases2 = phases2,
+    voc_times_1 = voc_times_1,
+    voc_times_2 = voc_times_2
+  ))
+}
+
+
+# ============================================================================
+# MECHANISM 2: GRADUAL ENTRAINMENT MODEL (Primate/Bird Literature)
+# ============================================================================
+# How it works:
+# - Each individual adjusts their INTRINSIC FREQUENCY based on partner
+# - Continuous mutual adaptation over many cycles
+# - Not event-triggered, but ongoing influence
+# - Common in marmoset, bird duetting models
+
+kuramoto_model <- function(t, state, parameters) {
+  with(as.list(c(state, parameters)), {
+    # Kuramoto coupling: each oscillator attracted to other's phase
+    dtheta1_dt <- omega1 + K * sin(theta2 - theta1)
+    dtheta2_dt <- omega2 + K * sin(theta1 - theta2)
+    
+    list(c(dtheta1_dt, dtheta2_dt))
+  })
+}
+
+simulate_gradual_entrainment <- function(duration = 100,
+                                        freq1 = 1.0,
+                                        freq2 = 1.05,
+                                        coupling = -0.15) {  # Negative K for alternation
+  
+  # Initial random phases
+  initial_state <- c(
+    theta1 = runif(1, 0, 2*pi),
+    theta2 = runif(1, 0, 2*pi)
+  )
+  
+  # Time sequence
+  times <- seq(0, duration, by = 0.01)
+  
+  # Parameters for Kuramoto model
+  parameters <- c(
+    omega1 = 2*pi * freq1,
+    omega2 = 2*pi * freq2,
+    K = coupling
+  )
+  
+  # Solve differential equations
+  output <- ode(y = initial_state, 
+                times = times, 
+                func = kuramoto_model, 
+                parms = parameters)
+  
+  output_df <- as.data.frame(output)
+  
+  # Convert phases to vocalizations (threshold crossings)
+  find_vocalizations <- function(phase, time, threshold = 0.9) {
+    signal <- sin(phase)
+    crossings <- which(diff(signal > threshold) == 1)
+    return(time[crossings])
+  }
+  
+  voc_times_1 <- find_vocalizations(output_df$theta1, output_df$time)
+  voc_times_2 <- find_vocalizations(output_df$theta2, output_df$time)
+  
+  return(list(
+    mechanism = "Gradual Entrainment",
+    times = output_df$time,
+    phases1 = output_df$theta1,
+    phases2 = output_df$theta2,
+    voc_times_1 = voc_times_1,
+    voc_times_2 = voc_times_2
+  ))
+}
+
+
+# ============================================================================
+# RUN BOTH SIMULATIONS
+# ============================================================================
+
+cat("\n=== SIMULATING BOTH MECHANISMS ===\n")
+cat("Both will produce alternation, but through different processes...\n\n")
+
+# Simulate reactive reset
+cat("1. Running REACTIVE RESET model...\n")
+reset_sim <- simulate_reactive_reset(
+  duration = 1000,
+  freq1 = 1.0,
+  freq2 = 1.0,
+  reset_strength = 0.5
+)
+cat(sprintf("   Generated %d calls for Individual 1\n", length(reset_sim$voc_times_1)))
+cat(sprintf("   Generated %d calls for Individual 2\n\n", length(reset_sim$voc_times_2)))
+
+# Simulate gradual entrainment  
+cat("2. Running GRADUAL ENTRAINMENT model...\n")
+entrainment_sim <- simulate_gradual_entrainment(
+  duration = 1000,
+  freq1 = 1.0,
+  freq2 = 1.0,
+  coupling = -0.2
+)
+cat(sprintf("   Generated %d calls for Individual 1\n", length(entrainment_sim$voc_times_1)))
+cat(sprintf("   Generated %d calls for Individual 2\n\n", length(entrainment_sim$voc_times_2)))
+
+
+# ============================================================================
+# CREATE VOCALIZATION DATAFRAMES FOR VISUALIZATION
+# ============================================================================
+
+create_voc_dataframe <- function(sim_result, mechanism_name) {
+  # Add realistic durations
+  n1 <- length(sim_result$voc_times_1)
+  n2 <- length(sim_result$voc_times_2)
+  
+  durations_1 <- pmax(rnorm(n1, mean = 0.3, sd = 0.05), 0.1)
+  durations_2 <- pmax(rnorm(n2, mean = 0.3, sd = 0.05), 0.1)
+  
+  vocs <- bind_rows(
+    tibble(
+      Mechanism = mechanism_name,
+      Individual = "Individual 1",
+      StartTime = sim_result$voc_times_1,
+      Duration = durations_1
+    ),
+    tibble(
+      Mechanism = mechanism_name,
+      Individual = "Individual 2", 
+      StartTime = sim_result$voc_times_2,
+      Duration = durations_2
+    )
+  ) %>%
+    mutate(EndTime = StartTime + Duration) %>%
+    arrange(StartTime) %>%
+    mutate(Latency = c(NA, diff(StartTime)))
+  
+  return(vocs)
+}
+
+vocs_reset <- create_voc_dataframe(reset_sim, "Reactive Reset")
+vocs_entrainment <- create_voc_dataframe(entrainment_sim, "Gradual Entrainment")
+
+# Combine for comparison
+all_vocs <- bind_rows(vocs_reset, vocs_entrainment)
+
+
+# ============================================================================
+# VISUALIZATION 1: THEY LOOK SIMILAR (THE SUPERFICIAL PATTERN)
+# ============================================================================
+
+cat("Creating visualizations...\n")
+
+# Plot vocalization patterns - first 30 seconds
+p_patterns <- all_vocs %>%
+  filter(StartTime < 30) %>%
+  mutate(y_pos = ifelse(Individual == "Individual 1", 1.6, 1.4)) %>%
+  ggplot() +
+  geom_rect(aes(xmin = StartTime, xmax = EndTime,
+                ymin = y_pos - 0.08, ymax = y_pos + 0.08,
+                fill = Individual), alpha = 0.7) +
+  facet_wrap(~Mechanism, ncol = 1) +
+  scale_fill_manual(values = c("Individual 1" = "#4682B4", "Individual 2" = "#FC4E07")) +
+  scale_y_continuous(breaks = c(1.4, 1.6), labels = c("Individual 2", "Individual 1")) +
+  labs(x = "Time (seconds)", y = "",
+       title = "Superficially Similar: Both Mechanisms Produce Alternation") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    legend.position = "bottom",
+    strip.text = element_text(size = 12, face = "bold"),
+    panel.grid.major.y = element_blank()
+  )
+
+ggsave("mechanism_patterns.png", p_patterns, width = 12, height = 6, dpi = 300)
+cat("✓ Saved: mechanism_patterns.png\n")
+
+
+# ============================================================================
+# VISUALIZATION 2: PHASE DYNAMICS REVEAL THE DIFFERENCE
+# ============================================================================
+
+# Create phase dataframes
+phase_data <- bind_rows(
+  tibble(
+    Mechanism = "Reactive Reset",
+    Time = reset_sim$times,
+    Phase1 = reset_sim$phases1,
+    Phase2 = reset_sim$phases2
+  ) %>% filter(Time < 50),
+  tibble(
+    Mechanism = "Gradual Entrainment", 
+    Time = entrainment_sim$times,
+    Phase1 = entrainment_sim$phases1,
+    Phase2 = entrainment_sim$phases2
+  ) %>% filter(Time < 50)
+) %>%
+  mutate(PhaseDiff = (Phase1 - Phase2) %% (2*pi))
+
+p_phases <- phase_data %>%
+  ggplot(aes(x = Time, y = PhaseDiff, color = Mechanism)) +
+  geom_line(linewidth = 1) +
+  geom_hline(yintercept = pi, linetype = "dashed", color = "red") +
+  facet_wrap(~Mechanism, ncol = 1) +
+  scale_color_manual(values = c("Reactive Reset" = "#E69F00", 
+                                "Gradual Entrainment" = "#009E73")) +
+  labs(x = "Time (seconds)", 
+       y = "Phase Difference (radians)",
+       title = "Mechanism Signature: Phase Dynamics Reveal Different Processes") +
+  annotate("text", x = 25, y = pi + 0.3, 
+           label = "Target: Perfect Alternation (π)", color = "red") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    legend.position = "none",
+    strip.text = element_text(size = 12, face = "bold")
+  )
+
+ggsave("mechanism_phases.png", p_phases, width = 12, height = 6, dpi = 300)
+cat("✓ Saved: mechanism_phases.png\n")
+
+
+# ============================================================================
+# KEY DIAGNOSTIC: CONVERGENCE DYNAMICS
+# ============================================================================
+
+# Calculate how phase difference evolves over time
+convergence_data <- phase_data %>%
+  group_by(Mechanism) %>%
+  mutate(
+    Distance_from_target = abs(PhaseDiff - pi),
+    TimeWindow = cut(Time, breaks = seq(0, 50, by = 5))
+  ) %>%
+  group_by(Mechanism, TimeWindow) %>%
+  summarize(
+    MeanDistance = mean(Distance_from_target),
+    SDDistance = sd(Distance_from_target),
+    .groups = "drop"
+  ) %>%
+  filter(!is.na(TimeWindow))
+
+p_convergence <- convergence_data %>%
+  mutate(TimeWindow = as.numeric(TimeWindow) * 5 - 2.5) %>%
+  ggplot(aes(x = TimeWindow, y = MeanDistance, color = Mechanism)) +
+  geom_line(linewidth = 1.5) +
+  geom_point(size = 3) +
+  scale_color_manual(values = c("Reactive Reset" = "#E69F00",
+                                "Gradual Entrainment" = "#009E73")) +
+  labs(x = "Time (seconds)",
+       y = "Distance from Perfect Alternation",
+       title = "Distinguishing Signature: Different Convergence Dynamics") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    legend.position = "bottom",
+    legend.title = element_blank()
+  )
+
+ggsave("mechanism_convergence.png", p_convergence, width = 10, height = 6, dpi = 300)
+cat("✓ Saved: mechanism_convergence.png\n")
+
+
+# ============================================================================
+# SUMMARY STATISTICS
+# ============================================================================
+
+cat("\n=== COMPARING MECHANISMS ===\n\n")
+
+# Calculate inter-call intervals
+calculate_statistics <- function(vocs, mechanism_name) {
+  stats <- vocs %>%
+    group_by(Individual) %>%
+    summarize(
+      mean_ICI = mean(Latency, na.rm = TRUE),
+      sd_ICI = sd(Latency, na.rm = TRUE),
+      cv_ICI = sd_ICI / mean_ICI,
+      .groups = "drop"
+    ) %>%
+    summarize(
+      Mechanism = mechanism_name,
+      mean_ICI = mean(mean_ICI),
+      mean_CV = mean(cv_ICI)
+    )
+  return(stats)
+}
+
+stats_reset <- calculate_statistics(vocs_reset, "Reactive Reset")
+stats_entrainment <- calculate_statistics(vocs_entrainment, "Gradual Entrainment")
+
+comparison <- bind_rows(stats_reset, stats_entrainment)
+
+print(comparison)
+
+cat("\nKey Observations:\n")
+cat("1. Both mechanisms produce alternation (similar mean inter-call intervals)\n")
+cat("2. But they differ in:\n")
+cat("   - Convergence speed (entrainment is gradual, reset is fast)\n")
+cat("   - Phase trajectory smoothness (entrainment smooth, reset has jumps)\n")
+cat("   - Variability patterns (different signatures)\n\n")
+
+cat("=== NEXT STEP ===\n")
+cat("Build Stan models that can distinguish which mechanism generated observed data\n")
+cat("based on these signatures.\n\n")
+
+
+# ============================================================================
+# SAVE DATA FOR STAN MODELING
+# ============================================================================
+
+# Save both datasets for Stan analysis
+saveRDS(vocs_reset, "vocs_reactive_reset.rds")
+saveRDS(vocs_entrainment, "vocs_gradual_entrainment.rds")
+saveRDS(list(reset = reset_sim, entrainment = entrainment_sim), "simulation_results.rds")
+
+cat("✓ Data saved for Stan modeling\n")
+cat("\nFiles created:\n")
+cat("  - mechanism_patterns.png (superficial similarity)\n")
+cat("  - mechanism_phases.png (phase dynamics)\n") 
+cat("  - mechanism_convergence.png (distinguishing signature)\n")
+cat("  - vocs_reactive_reset.rds (data for Stan)\n")
+cat("  - vocs_gradual_entrainment.rds (data for Stan)\n")
+```
+
+
+
+
