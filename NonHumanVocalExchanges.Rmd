@@ -25,7 +25,8 @@ p_load(rstan,
        patchwork, 
        CircStats,
        deSolve,
-       rstan)
+       rstan,
+       cowplot)
 ```
 
 # Data Simulation, Reactive Reset
@@ -193,7 +194,6 @@ simulate_reactive_reset <- function(
 
 ```
 
-
 # Data Simulation, Gradual Entrainment
 
 ```{r}
@@ -201,10 +201,11 @@ simulate_entrainment_mechanism <- function(
   duration = 100,
   freq1 = 1.0,
   freq2 = 1.0,
-  coupling = -0.15,  # Negative for alternation
+  coupling = -0.15,
   dt = 0.01,
-  phase_noise_sd = 0.05,  # NEW: Add process noise to phases
-  duration_noise_sd = 0.2
+  phase_noise_sd = 0.05,
+  duration_noise_sd = 0.2,
+  ici_noise_sd = 0.05  # NEW: Add ICI-level variability
 ) {
   
   times <- seq(0, duration, dt)
@@ -228,15 +229,17 @@ simulate_entrainment_mechanism <- function(
     phases1[i] <- phases1[i-1] + dphase1 * dt
     phases2[i] <- phases2[i-1] + dphase2 * dt
     
-    # Detect vocalizations
+    # Detect vocalizations - ADD NOISE TO TIMING
     if (phases1[i] >= 2*pi && phases1[i-1] < 2*pi) {
-      voc_times_1 <- c(voc_times_1, times[i])
+      voc_time <- times[i] + rnorm(1, 0, ici_noise_sd)  # Add timing jitter
+      voc_times_1 <- c(voc_times_1, voc_time)
       voc_durations_1 <- c(voc_durations_1, rnorm(1, 0.3, duration_noise_sd))
       phases1[i] <- phases1[i] %% (2*pi)
     }
     
     if (phases2[i] >= 2*pi && phases2[i-1] < 2*pi) {
-      voc_times_2 <- c(voc_times_2, times[i])
+      voc_time <- times[i] + rnorm(1, 0, ici_noise_sd)  # Add timing jitter
+      voc_times_2 <- c(voc_times_2, voc_time)
       voc_durations_2 <- c(voc_durations_2, rnorm(1, 0.3, duration_noise_sd))
       phases2[i] <- phases2[i] %% (2*pi)
     }
@@ -260,6 +263,76 @@ simulate_entrainment_mechanism <- function(
     duration_noise = duration_noise_sd
   )
 }
+
+simulate_entrainment_mechanism <- function(
+  duration = 100,
+  freq1 = 1.0,
+  freq2 = 1.0,
+  coupling = -0.15,
+  dt = 0.01,
+  phase_noise_sd = 0.05,
+  duration_noise_sd = 0.2,
+  ici_noise_sd = 0.05
+) {
+  
+  times <- seq(0, duration, dt)
+  n_steps <- length(times)
+  
+  phases1 <- numeric(n_steps)
+  phases2 <- numeric(n_steps)
+  
+  # START NEAR SYNCHRONY (both near 0)
+  phases1[1] <- 0
+  phases2[1] <- 0.2  # Small offset - almost in phase
+  
+  voc_times_1 <- numeric()
+  voc_times_2 <- numeric()
+  voc_durations_1 <- numeric()
+  voc_durations_2 <- numeric()
+  
+  for (i in 2:n_steps) {
+    # Kuramoto coupling WITH NOISE
+    dphase1 <- 2*pi*freq1 + coupling * sin(phases2[i-1] - phases1[i-1]) + rnorm(1, 0, phase_noise_sd)
+    dphase2 <- 2*pi*freq2 + coupling * sin(phases1[i-1] - phases2[i-1]) + rnorm(1, 0, phase_noise_sd)
+    
+    phases1[i] <- phases1[i-1] + dphase1 * dt
+    phases2[i] <- phases2[i-1] + dphase2 * dt
+    
+    # Detect vocalizations - ADD NOISE TO TIMING
+    if (phases1[i] >= 2*pi && phases1[i-1] < 2*pi) {
+      voc_time <- times[i] + rnorm(1, 0, ici_noise_sd)
+      voc_times_1 <- c(voc_times_1, voc_time)
+      voc_durations_1 <- c(voc_durations_1, rnorm(1, 0.3, duration_noise_sd))
+      phases1[i] <- phases1[i] %% (2*pi)
+    }
+    
+    if (phases2[i] >= 2*pi && phases2[i-1] < 2*pi) {
+      voc_time <- times[i] + rnorm(1, 0, ici_noise_sd)
+      voc_times_2 <- c(voc_times_2, voc_time)
+      voc_durations_2 <- c(voc_durations_2, rnorm(1, 0.3, duration_noise_sd))
+      phases2[i] <- phases2[i] %% (2*pi)
+    }
+    
+    phases1[i] <- phases1[i] %% (2*pi)
+    phases2[i] <- phases2[i] %% (2*pi)
+  }
+  
+  list(
+    times = times,
+    phases1 = phases1,
+    phases2 = phases2,
+    voc_times_1 = voc_times_1,
+    voc_times_2 = voc_times_2,
+    voc_durations_1 = voc_durations_1,
+    voc_durations_2 = voc_durations_2,
+    freq1 = freq1,
+    freq2 = freq2,
+    coupling = coupling,
+    phase_noise_sd = phase_noise_sd,
+    duration_noise = duration_noise_sd
+  )
+}
+
 ```
 
 # Convert to Vocalisations
@@ -293,47 +366,91 @@ reset_sim <- simulate_reactive_reset(
   T1 = 1.0,
   T2 = 1,
   rebound_ratio = 0.3,
-  call_duration = 0.2,
+  call_duration = 0.25,
   noise_sd = 0.2,
-  duration_noise_sd = 0.2
+  duration_noise_sd = 0.05
 )
 
-entrainment_sim <- simulate_entrainment_mechanism(
-  duration = 400,
+osc_sim <- simulate_entrainment_mechanism(
+  duration = 100,
   freq1 = 1.0,
-  freq2 = 1,
-  coupling = -0.55,
-  dt = 0.01,
-  phase_noise_sd = 0.2,
-  duration_noise_sd = 0.2
+  freq2 = 1.0,     # Different frequencies to see entrainment
+  coupling = -0.06,
+  phase_noise_sd = 0.02,
+  duration_noise_sd = 0.2,
+  ici_noise_sd = 0.09  # This adds realistic ICI variability
+)
+
+osc_sim2 <- simulate_entrainment_mechanism(
+  duration = 100,
+  freq1 = 1.0,
+  freq2 = 1.0,     # Different frequencies to see entrainment
+  coupling = 0.05,
+  phase_noise_sd = 0.02,
+  duration_noise_sd = 0.2,
+  ici_noise_sd = 0.05  # This adds realistic ICI variability
 )
 
 # Create vocalization dataframes
 vocs_reset <- create_voc_dataframe(reset_sim, "Reactive Reset")
-vocs_entrainment <- create_voc_dataframe(entrainment_sim, "Gradual Entrainment")
+vocs_entrainment <- create_voc_dataframe(osc_sim, "Entrainment")
+vocs_synchrony <- create_voc_dataframe(osc_sim2, "Synchrony")
 
 # Combine for comparison
-all_vocs <- bind_rows(vocs_reset, vocs_entrainment)
+all_vocs <- bind_rows(vocs_reset, 
+                      vocs_entrainment, 
+                      #vocs_synchrony
+                      )
 ```
 
-# Visualise Vocalisation Patterns
+# Visualise
 
 ```{r}
-# ============================================================================
-# VISUALIZATION 1: SUPERFICIALLY SIMILAR PATTERNS
-# ============================================================================
-all_vocs %>%
-  filter(StartTime < 30) %>%
-  mutate(y_pos = ifelse(Individual == "Individual 1", 1.6, 1.4)) %>%
+# First, create the all_vocs dataframe from both simulations
+all_vocs <- bind_rows(
+  tibble(
+    Mechanism = "Entrainment",
+    Individual = "Individual 1",
+    StartTime = osc_sim$voc_times_1,
+    EndTime = osc_sim$voc_times_1 + osc_sim$voc_durations_1
+  ),
+  tibble(
+    Mechanism = "Entrainment",
+    Individual = "Individual 2",
+    StartTime = osc_sim$voc_times_2,
+    EndTime = osc_sim$voc_times_2 + osc_sim$voc_durations_2
+  ),
+  tibble(
+    Mechanism = "Reactive Reset",
+    Individual = "Individual 1",
+    StartTime = reset_sim$voc_times_1,
+    EndTime = reset_sim$voc_times_1 + reset_sim$voc_durations_1
+  ),
+  tibble(
+    Mechanism = "Reactive Reset",
+    Individual = "Individual 2",
+    StartTime = reset_sim$voc_times_2,
+    EndTime = reset_sim$voc_times_2 + reset_sim$voc_durations_2
+  )
+)
+
+# Panel A: Vocalization timing
+panel_a <- all_vocs %>%
+  filter(StartTime < 20) %>%
+  mutate(
+    y_pos = ifelse(Individual == "Individual 1", 0.6, 0.4),
+    Mechanism = factor(Mechanism, levels = c("Entrainment", "Reactive Reset"))
+  ) %>%
   ggplot() +
   geom_rect(aes(xmin = StartTime, xmax = EndTime,
-                ymin = y_pos - 0.08, ymax = y_pos + 0.08,
-                fill = Individual), alpha = 0.7) +
+                ymin = y_pos - 0.05, ymax = y_pos + 0.05,
+                fill = Individual), alpha = 0.7, color = "black", linewidth = 0.3) +
   facet_wrap(~Mechanism, ncol = 1) +
-  scale_fill_manual(values = c("Individual 1" = "#4682B4", "Individual 2" = "#FC4E07")) +
-  scale_y_continuous(breaks = c(1.4, 1.6), labels = c("Individual 2", "Individual 1")) +
+  scale_fill_manual(values = c("Individual 1" = "#E69F00", "Individual 2" = "#56B4E9")) +
+  scale_y_continuous(breaks = c(0.4, 0.6), labels = c("Individual 2", "Individual 1")) +
+  scale_x_continuous(breaks = seq(0, 20, 5), limits = c(0, 20)) +
   labs(x = "Time (seconds)", y = "",
-       title = "Superficially Similar: Both Mechanisms Produce Alternation") +
+       title = "A) Both Mechanisms Produce Alternation") +
   theme_minimal() +
   theme(
     plot.title = element_text(hjust = 0.5, size = 20, face = "bold", color = "black"), 
@@ -341,30 +458,21 @@ all_vocs %>%
     axis.title.x = element_text(size = 15, color = "black"),
     axis.text.y = element_text(size = 15, color = "black"),
     axis.title.y = element_text(size = 15, color = "black"),
-    legend.title = element_blank(),
     legend.position = "none",
-    legend.key.size = unit(1, "lines"),
-    legend.text = element_text(size = 15),
-    legend.background = element_rect(fill = "transparent", color = NA),
-    legend.key = element_rect(fill = "transparent", color = NA),
     strip.background = element_rect(color = "white", fill = "white", linewidth = 1.5, linetype = "solid"),
-    strip.text.x = element_text(size = 15, color = "black"),
-    strip.text.y = element_text(size = 15, color = "black"),
+    strip.text.x = element_text(size = 15, color = "black", face = "bold"),
     panel.grid.major.y = element_blank(),
     panel.grid.minor.y = element_blank(),
+    panel.grid.minor.x = element_blank(),
     panel.border = element_blank(),
-    strip.placement = "outside",
-    panel.spacing = unit(2, "cm"),
-    plot.margin = margin(t = 0.1,
-                             r = 0.1,
-                             b = 0.1,
-                             l = 0.1,
-                             unit = "cm"))
+    panel.spacing = unit(1.5, "cm"),
+    plot.margin = margin(t = 0.5, r = 0.5, b = 0.5, l = 0.5, unit = "cm")
+  )
 
-# ============================================================================
-# VISUALIZATION 2: PHASE DYNAMICS REVEAL THE DIFFERENCE
-# ============================================================================
-# Create phase dataframes
+panel_a
+
+
+# Panel B: Phase dynamics
 phase_data <- bind_rows(
   tibble(
     Mechanism = "Reactive Reset",
@@ -373,35 +481,32 @@ phase_data <- bind_rows(
     Phase2 = reset_sim$phases2
   ) %>% filter(Time < 50),
   tibble(
-    Mechanism = "Gradual Entrainment", 
-    Time = entrainment_sim$times,
-    Phase1 = entrainment_sim$phases1,
-    Phase2 = entrainment_sim$phases2
+    Mechanism = "Entrainment", 
+    Time = osc_sim$times,
+    Phase1 = osc_sim$phases1,
+    Phase2 = osc_sim$phases2
   ) %>% filter(Time < 50)
 ) %>%
-  mutate(PhaseDiff = (Phase1 - Phase2) %% (2*pi))
+  mutate(
+    PhaseDiff = (Phase1 - Phase2) %% (2*pi),
+    Mechanism = factor(Mechanism, levels = c("Entrainment", "Reactive Reset"))
+  )
 
-phase_data %>%
+panel_b <- phase_data %>%
   ggplot(aes(x = Time, y = PhaseDiff, color = Mechanism)) +
-  geom_line(linewidth = 1) +
-  geom_hline(yintercept = pi, linetype = "dashed", color = "red", alpha = 0.5) +
-  scale_y_continuous(breaks = c(0, pi/2, pi, 3*pi/2, 2 * pi), labels = c('0', 'π/2', 'π', '3π/2', '2π')) +
-  annotate("text", x = 2, y = pi + 0.3, label = "Perfect alternation (π)", 
-           color = "red", size = 3) +
-  facet_wrap(~Mechanism, ncol = 1, scales = "free_y") +
+  geom_hline(yintercept = pi, linetype = "dashed", color = "gray40", linewidth = 0.8, alpha = 0.7) +
+  geom_line(linewidth = 1.2) +
+  scale_y_continuous(
+    breaks = c(0, pi/2, pi, 3*pi/2, 2 * pi), 
+    labels = c('0', 'π/2', 'π', '3π/2', '2π'),
+    limits = c(0, 2*pi)
+  ) +
+  facet_wrap(~Mechanism, ncol = 1) +
   scale_color_manual(values = c("Reactive Reset" = "#E69F00", 
-                                "Gradual Entrainment" = "#009E73")) +
+                                "Entrainment" = "#56B4E9")) +
   labs(x = "Time (seconds)", 
        y = "Phase Difference",
-       title = "Mechanistic Signatures: Phase Dynamics Reveal Different Processes") +
-       #subtitle = "Reset shows oscillations around π (sawtooth from discrete jumps), Entrainment shows smooth convergence to π") +
-  theme_minimal() +
-  theme(
-    plot.title = element_text(size = 14, face = "bold"),
-    plot.subtitle = element_text(size = 11),
-    legend.position = "none",
-    strip.text = element_text(size = 12, face = "bold")
-  ) +
+       title = "B) Phase Dynamics Reveal Distinct Mechanisms") +
   theme_minimal() +
   theme(
     plot.title = element_text(hjust = 0.5, size = 20, face = "bold", color = "black"), 
@@ -409,69 +514,21 @@ phase_data %>%
     axis.title.x = element_text(size = 15, color = "black"),
     axis.text.y = element_text(size = 15, color = "black"),
     axis.title.y = element_text(size = 15, color = "black"),
-    legend.title = element_blank(),
     legend.position = "none",
-    legend.key.size = unit(1, "lines"),
-    legend.text = element_text(size = 15),
-    legend.background = element_rect(fill = "transparent", color = NA),
-    legend.key = element_rect(fill = "transparent", color = NA),
     strip.background = element_rect(color = "white", fill = "white", linewidth = 1.5, linetype = "solid"),
-    strip.text.x = element_text(size = 15, color = "black"),
-    strip.text.y = element_text(size = 15, color = "black"),
-    panel.grid.major.y = element_blank(),
+    strip.text.x = element_text(size = 15, color = "black", face = "bold"),
     panel.grid.minor.y = element_blank(),
+    panel.grid.minor.x = element_blank(),
     panel.border = element_blank(),
-    strip.placement = "outside",
-    panel.spacing = unit(2, "cm"),
-    plot.margin = margin(t = 0.1,
-                             r = 0.1,
-                             b = 0.1,
-                             l = 0.1,
-                             unit = "cm"))
-```
-
-```{r}
-# ============================================================================
-# ENHANCED VISUALIZATIONS: REVEALING MECHANISTIC DIFFERENCES
-# ============================================================================
-
-# Run your simulations first (using your existing code)
-reset_sim <- simulate_reactive_reset(
-  duration = 50,
-  T1 = 1.0,
-  T2 = 1.0,
-  rebound_ratio = 0.6,
-  call_duration = 0.2,
-  noise_sd = 0.1
-)
-
-entrainment_sim <- simulate_entrainment_mechanism(
-  duration = 50,
-  freq1 = 1.0,
-  freq2 = 1.05,
-  coupling = -0.1,
-  dt = 0.01,
-  phase_noise_sd = 0.1
-)
-
-# ============================================================================
-# 1. PHASE DYNAMICS WITH RESET EVENTS MARKED
-# ============================================================================
-
-# Create reset event dataframe
-reset_events <- bind_rows(
-  tibble(
-    Time = reset_sim$voc_times_1[reset_sim$reset_1],
-    Individual = "Individual 1"
-  ),
-  tibble(
-    Time = reset_sim$voc_times_2[reset_sim$reset_2],
-    Individual = "Individual 2"
+    panel.spacing = unit(1.5, "cm"),
+    plot.margin = margin(t = 0.5, r = 0.5, b = 0.5, l = 0.5, unit = "cm")
   )
-)
 
-# Phase data
-phase_data <- bind_rows(
+panel_b
+
+# Panel C: Polar plot of phase differences (simpler and cleaner!)
+# Sample the phase difference at regular intervals
+polar_data <- bind_rows(
   tibble(
     Mechanism = "Reactive Reset",
     Time = reset_sim$times,
@@ -479,804 +536,95 @@ phase_data <- bind_rows(
     Phase2 = reset_sim$phases2
   ),
   tibble(
-    Mechanism = "Gradual Entrainment", 
-    Time = entrainment_sim$times,
-    Phase1 = entrainment_sim$phases1,
-    Phase2 = entrainment_sim$phases2
+    Mechanism = "Entrainment", 
+    Time = osc_sim$times,
+    Phase1 = osc_sim$phases1,
+    Phase2 = osc_sim$phases2
   )
 ) %>%
-  mutate(PhaseDiff = abs(Phase1 - Phase2))
-
-p1 <- phase_data %>%
-  ggplot(aes(x = Time, y = PhaseDiff)) +
-  geom_line(linewidth = 0.8, color = "#2C3E50") +
-  geom_hline(yintercept = pi, linetype = "dashed", color = "red", alpha = 0.6) +
-  # Add reset markers ONLY for reset mechanism
-  geom_vline(data = reset_events, aes(xintercept = Time), 
-             color = "#E74C3C", alpha = 0.4, linetype = "dotted", linewidth = 0.5) +
-  facet_wrap(~Mechanism, ncol = 1, scales = "free_y") +
-  scale_y_continuous(limits = c(0, 2 * pi), breaks = c(0, pi/2, pi, 
-                                                       3*pi/2, 2 * pi), labels = c('0', 'π/2', 'π', '3π/2', '2π')) +
-  labs(x = "Time (seconds)", 
-       y = "Phase Difference (radians)",
-       title = "Phase Dynamics with Reset Events Marked (red dotted lines)") +
-  theme_minimal() +
-  theme(
-    plot.title = element_text(hjust = 0.5, size = 20, face = "bold", color = "black"), 
-    axis.text.x = element_text(size = 15, color = "black"),
-    axis.title.x = element_text(size = 15, color = "black"),
-    axis.text.y = element_text(size = 15, color = "black"),
-    axis.title.y = element_text(size = 15, color = "black"),
-    legend.title = element_blank(),
-    legend.position = "top",
-    legend.key.size = unit(1, "lines"),
-    legend.text = element_text(size = 15),
-    legend.background = element_rect(fill = "transparent", color = NA),
-    legend.key = element_rect(fill = "transparent", color = NA),
-    strip.background = element_rect(color = "white", fill = "white", linewidth = 1.5, linetype = "solid"),
-    strip.text.x = element_text(size = 15, color = "black"),
-    strip.text.y = element_text(size = 15, color = "black"),
-    panel.grid.major.y = element_blank(),
-    panel.grid.minor.y = element_blank(),
-    panel.border = element_blank(),
-    strip.placement = "outside",
-    panel.spacing = unit(2, "cm"),
-    plot.margin = margin(t = 0.1,
-                             r = 0.1,
-                             b = 0.1,
-                             l = 0.1,
-                             unit = "cm"))
-p1
-
-# ============================================================================
-# 2. FIXED ICI HISTOGRAM - BIMODAL vs UNIMODAL
-# ============================================================================
-
-ici_data <- bind_rows(
-  tibble(
-    Mechanism = "Reactive Reset",
-    Individual = "Individual 1",
-    ICI = diff(reset_sim$voc_times_1)
-  ),
-  tibble(
-    Mechanism = "Reactive Reset",
-    Individual = "Individual 2",
-    ICI = diff(reset_sim$voc_times_2)
-  ),
-  tibble(
-    Mechanism = "Gradual Entrainment",
-    Individual = "Individual 1",
-    ICI = diff(entrainment_sim$voc_times_1)
-  ),
-  tibble(
-    Mechanism = "Gradual Entrainment",
-    Individual = "Individual 2",
-    ICI = diff(entrainment_sim$voc_times_2)
-  )
-)
-
-p2 <- ici_data %>%
-  ggplot(aes(x = ICI, fill = Mechanism)) +
-  geom_histogram(alpha = 0.6, bins = 30, color = "white") +
-  scale_fill_manual(values = c("Reactive Reset" = "#E69F00", 
-                                "Gradual Entrainment" = "#009E73")) +
-  facet_wrap(~Mechanism, ncol = 1, scales = "free_y") +
-  labs(x = "Inter-Call Interval (seconds)", 
-       y = "Count",
-       title = "ICI Distributions: Bimodal (Reset) vs Unimodal (Entrainment)") +
-  theme_minimal() +
-  theme(
-    plot.title = element_text(size = 11, face = "bold"),
-    legend.position = "none",
-    strip.text = element_text(size = 10, face = "bold")
-  )
-
-
-```
-
-
-# Data Simulation
-
-```{r}
-# ============================================================================
-# REACTIVE RESET SIMULATION (Compatible with your visualization)
-# ============================================================================
-
-
-simulate_entrainment_mechanism <- function(
-  duration = 100,
-  freq1 = 1.0,
-  freq2 = 1.0,
-  coupling = -0.15,  # Negative for alternation
-  dt = 0.01
-) {
-  
-  times <- seq(0, duration, dt)
-  n_steps <- length(times)
-  
-  phases1 <- numeric(n_steps)
-  phases2 <- numeric(n_steps)
-  phases1[1] <- 0
-  phases2[1] <- pi * 0.8
-  
-  voc_times_1 <- numeric()
-  voc_times_2 <- numeric()
-  voc_durations_1 <- numeric()
-  voc_durations_2 <- numeric()
-  
-  for (i in 2:n_steps) {
-    # Kuramoto coupling
-    dphase1 <- 2*pi*freq1 + coupling * sin(phases2[i-1] - phases1[i-1])
-    dphase2 <- 2*pi*freq2 + coupling * sin(phases1[i-1] - phases2[i-1])
-    
-    phases1[i] <- phases1[i-1] + dphase1 * dt
-    phases2[i] <- phases2[i-1] + dphase2 * dt
-    
-    # Detect vocalizations
-    if (phases1[i] >= 2*pi && phases1[i-1] < 2*pi) {
-      voc_times_1 <- c(voc_times_1, times[i])
-      voc_durations_1 <- c(voc_durations_1, rnorm(1, 0.3, 0.05))
-      phases1[i] <- phases1[i] %% (2*pi)
-    }
-    
-    if (phases2[i] >= 2*pi && phases2[i-1] < 2*pi) {
-      voc_times_2 <- c(voc_times_2, times[i])
-      voc_durations_2 <- c(voc_durations_2, rnorm(1, 0.3, 0.05))
-      phases2[i] <- phases2[i] %% (2*pi)
-    }
-    
-    phases1[i] <- phases1[i] %% (2*pi)
-    phases2[i] <- phases2[i] %% (2*pi)
-  }
-  
-  list(
-    times = times,
-    phases1 = phases1,
-    phases2 = phases2,
-    voc_times_1 = voc_times_1,
-    voc_times_2 = voc_times_2,
-    voc_durations_1 = voc_durations_1,
-    voc_durations_2 = voc_durations_2,
-    freq1 = freq1,
-    freq2 = freq2,
-    coupling = coupling
-  )
-}
-
-# ============================================================================
-# HELPER FUNCTION (Match your create_voc_dataframe)
-# ============================================================================
-
-create_voc_dataframe <- function(sim_result, mechanism_name) {
-  bind_rows(
-    tibble(
-      Mechanism = mechanism_name,
-      Individual = "Individual 1",
-      StartTime = sim_result$voc_times_1,
-      Duration = sim_result$voc_durations_1,
-      EndTime = StartTime + Duration
-    ),
-    tibble(
-      Mechanism = mechanism_name,
-      Individual = "Individual 2",
-      StartTime = sim_result$voc_times_2,
-      Duration = sim_result$voc_durations_2,
-      EndTime = StartTime + Duration
-    )
-  )
-}
-
-# ============================================================================
-# RUN SIMULATIONS
-# ============================================================================
-
-cat("Running simulations...\n")
-
-# Simulate both mechanisms
-reset_sim <- simulate_reset_mechanism(
-  duration = 1000,
-  freq1 = 1.0,
-  freq2 = 1.05,
-  reset_strength = 1,
-  dt = 0.01
-)
-
-entrainment_sim <- simulate_entrainment_mechanism(
-  duration = 100,
-  freq1 = 1.0,
-  freq2 = 1.05,
-  coupling = -0.4,
-  dt = 0.01
-)
-```
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-```{r}
-# ============================================================================
-# DISTINGUISHING MECHANISMS: Two Paths to the Same Pattern
-# ============================================================================
-# This code demonstrates that alternating vocalizations can emerge from
-# fundamentally different mechanisms:
-# 1. REACTIVE RESET: Discrete phase adjustments triggered by partner's calls
-# 2. GRADUAL ENTRAINMENT: Continuous mutual frequency adaptation
-#
-# Key insight: These look similar superficially but have different signatures
-# that formal models can detect and distinguish.
-# ============================================================================
-
-# Set seed for reproducibility
-set.seed(42)
-
-# Common parameters
-simulation_time <- 100  # seconds
-dt <- 0.01              # time step
-
-
-# ============================================================================
-# MECHANISM 1: REACTIVE RESET MODEL (Insect/Anuran Literature)
-# ============================================================================
-# How it works:
-# - Each individual has an internal oscillator that accumulates phase
-# - When hearing partner's call, immediately RESET or DELAY own phase
-# - This is event-triggered, discrete adjustment
-# - Common in katydid, cricket, frog chorusing models
-
-simulate_reactive_reset <- function(duration = 100, 
-                                   dt = 0.01,
-                                   freq1 = 1.0,      # Natural frequency individual 1
-                                   freq2 = 1.0,     # Natural frequency individual 2
-                                   reset_strength = 0.75) {  # How much to delay when hearing call
-  
-  times <- seq(0, duration, by = dt)
-  n_steps <- length(times)
-  
-  # Initialize phase and vocalization tracking
-  phase1 <- runif(1, 0, 2*pi)
-  phase2 <- runif(1, 0, 2*pi)
-  
-  voc_threshold <- 2*pi - 0.1  # Call when phase reaches threshold
-  
-  # Storage
-  phases1 <- numeric(n_steps)
-  phases2 <- numeric(n_steps)
-  voc_times_1 <- c()
-  voc_times_2 <- c()
-  
-  for (i in 1:n_steps) {
-    # Store current phases
-    phases1[i] <- phase1
-    phases2[i] <- phase2
-    
-    # Check if individual 1 should vocalize
-    if (phase1 >= voc_threshold) {
-      voc_times_1 <- c(voc_times_1, times[i])
-      phase1 <- 0  # Reset own phase after calling
-      
-      # REACTIVE MECHANISM: Individual 2 hears this and delays
-      # If individual 2 is in vulnerable phase (would call soon), delay it
-      if (phase2 > pi) {  # Only respond if past halfway point
-        phase2 <- phase2 - reset_strength  # Push back phase
-      }
-    }
-    
-    # Check if individual 2 should vocalize
-    if (phase2 >= voc_threshold) {
-      voc_times_2 <- c(voc_times_2, times[i])
-      phase2 <- 0  # Reset own phase after calling
-      
-      # REACTIVE MECHANISM: Individual 1 hears this and delays
-      if (phase1 > pi) {
-        phase1 <- phase1 - reset_strength
-      }
-    }
-    
-    # Phase accumulation at natural frequencies
-    phase1 <- phase1 + 2*pi * freq1 * dt
-    phase2 <- phase2 + 2*pi * freq2 * dt
-    
-    # Keep phases in [0, 2*pi] range
-    phase1 <- phase1 %% (2*pi)
-    phase2 <- phase2 %% (2*pi)
-  }
-  
-  return(list(
-    mechanism = "Reactive Reset",
-    times = times,
-    phases1 = phases1,
-    phases2 = phases2,
-    voc_times_1 = voc_times_1,
-    voc_times_2 = voc_times_2
-  ))
-}
-
-
-
-# ============================================================================
-# REACTIVE RESET SIMULATION - Based on Greenfield (1994)
-# ============================================================================
-# Key mechanism: Inhibitory resetting with post-inhibitory rebound
-# When hearing a partner's call:
-#   1. Pacemaker resets to basal level
-#   2. RAPID REBOUND: Next call comes FASTER than normal (τ < T)
-#   3. rebound_ratio = τ/T captures this (typically 0.6-0.9)
-# ============================================================================
-
-simulate_reset_mechanism <- function(
-  duration = 100,           # Total simulation time (seconds)
-  T1 = 1.0,                # Individual 1's natural period (seconds)
-  T2 = 1.05,               # Individual 2's natural period (slightly different)
-  rebound_ratio = 0.7,     # KEY PARAMETER: τ/T ratio (how fast to rebound after reset)
-  call_duration = 0.3,     # Duration of each call
-  noise_sd = 0.05          # Variability in timing
-) {
-  
-  # Initialize
-  time <- 0
-  calls_1 <- numeric()
-  calls_2 <- numeric()
-  reset_flags_1 <- logical()
-  reset_flags_2 <- logical()
-  
-  # Next scheduled call times (start with initial offset)
-  next_call_1 <- runif(1, 0, T1)
-  next_call_2 <- runif(1, 0, T2)
-  
-  # Track last call times
-  last_call_1 <- -Inf
-  last_call_2 <- -Inf
-  
-  while (time < duration) {
-    
-    # Determine who calls next
-    if (next_call_1 < next_call_2) {
-      # Individual 1 calls
-      time <- next_call_1
-      if (time >= duration) break
-      
-      call_start <- time
-      call_end <- time + call_duration
-      
-      calls_1 <- c(calls_1, call_start)
-      reset_flags_1 <- c(reset_flags_1, FALSE)
-      last_call_1 <- call_start
-      
-      # Check if Individual 2 is RESET by this call
-      # Reset occurs if Individual 2's next call hasn't been triggered yet
-      # and they hear Individual 1's call
-      if (next_call_2 > call_start && next_call_2 <= call_end + 0.05) {
-        # Individual 2 is RESET!
-        # They must wait for REBOUND period (τ = rebound_ratio * T2)
-        rebound_period <- rebound_ratio * T2 + rnorm(1, 0, noise_sd)
-        next_call_2 <- call_end + rebound_period
-      } else {
-        # Individual 2 not reset, schedule normally
-        next_call_1 <- call_start + T1 + rnorm(1, 0, noise_sd)
-      }
-      
-      # Individual 1 continues with normal period
-      next_call_1 <- call_start + T1 + rnorm(1, 0, noise_sd)
-      
-    } else {
-      # Individual 2 calls
-      time <- next_call_2
-      if (time >= duration) break
-      
-      call_start <- time
-      call_end <- time + call_duration
-      
-      calls_2 <- c(calls_2, call_start)
-      reset_flags_2 <- c(reset_flags_2, FALSE)
-      last_call_2 <- call_start
-      
-      # Check if Individual 1 is RESET by this call
-      if (next_call_1 > call_start && next_call_1 <= call_end + 0.05) {
-        # Individual 1 is RESET!
-        rebound_period <- rebound_ratio * T1 + rnorm(1, 0, noise_sd)
-        next_call_1 <- call_end + rebound_period
-      } else {
-        # Not reset
-        next_call_2 <- call_start + T2 + rnorm(1, 0, noise_sd)
-      }
-      
-      # Individual 2 continues with normal period
-      next_call_2 <- call_start + T2 + rnorm(1, 0, noise_sd)
-    }
-  }
-  
-  list(
-    calls_1 = calls_1,
-    calls_2 = calls_2,
-    T1 = T1,
-    T2 = T2,
-    rebound_ratio = rebound_ratio,
-    call_duration = call_duration
-  )
-}
-
-# ============================================================================
-# PREPARE DATA FOR STAN: Inter-Call Intervals
-# ============================================================================
-# The key observable is: after being reset, ICIs are SHORTER
-
-prepare_data_for_stan <- function(sim) {
-  
-  # Combine all calls and sort
-  all_calls <- data.frame(
-    time = c(sim$calls_1, sim$calls_2),
-    caller = c(rep(1, length(sim$calls_1)), rep(2, length(sim$calls_2)))
-  ) %>%
-    arrange(time)
-  
-  # For each call, calculate ICI and detect if it was likely reset
-  all_calls <- all_calls %>%
-    group_by(caller) %>%
-    mutate(
-      ICI = time - lag(time),
-      prev_time = lag(time)
-    ) %>%
-    ungroup() %>%
-    filter(!is.na(ICI))
-  
-  # Detect resets: was there an intervening call from other caller?
-  all_calls <- all_calls %>%
-    rowwise() %>%
-    mutate(
-      was_reset = {
-        other_caller <- 3 - caller  # If caller=1, other=2; if caller=2, other=1
-        other_calls <- all_calls %>% 
-          filter(caller == other_caller, 
-                 time > prev_time, 
-                 time < time)
-        nrow(other_calls) > 0
-      }
-    ) %>%
-    ungroup()
-  
-  # Prepare for Stan
-  list(
-    N = nrow(all_calls),
-    ICI = all_calls$ICI,
-    caller = all_calls$caller,
-    was_reset = as.integer(all_calls$was_reset)
-  )
-}
-
-reset_data <- simulate_reset_mechanism()
-
-# ============================================================================
-# MECHANISM 2: GRADUAL ENTRAINMENT MODEL (Primate/Bird Literature)
-# ============================================================================
-# How it works:
-# - Each individual adjusts their INTRINSIC FREQUENCY based on partner
-# - Continuous mutual adaptation over many cycles
-# - Not event-triggered, but ongoing influence
-# - Common in marmoset, bird duetting models
-
-kuramoto_model <- function(t, state, parameters) {
-  with(as.list(c(state, parameters)), {
-    # Kuramoto coupling: each oscillator attracted to other's phase
-    dtheta1_dt <- omega1 + K * sin(theta2 - theta1)
-    dtheta2_dt <- omega2 + K * sin(theta1 - theta2)
-    
-    list(c(dtheta1_dt, dtheta2_dt))
-  })
-}
-
-simulate_gradual_entrainment <- function(duration = 100,
-                                        freq1 = 1.0,
-                                        freq2 = 1.05,
-                                        coupling = -0.15) {  # Negative K for alternation
-  
-  # Initial random phases
-  initial_state <- c(
-    theta1 = runif(1, 0, 2*pi),
-    theta2 = runif(1, 0, 2*pi)
-  )
-  
-  # Time sequence
-  times <- seq(0, duration, by = 0.01)
-  
-  # Parameters for Kuramoto model
-  parameters <- c(
-    omega1 = 2*pi * freq1,
-    omega2 = 2*pi * freq2,
-    K = coupling
-  )
-  
-  # Solve differential equations
-  output <- ode(y = initial_state, 
-                times = times, 
-                func = kuramoto_model, 
-                parms = parameters)
-  
-  output_df <- as.data.frame(output)
-  
-  # Convert phases to vocalizations (threshold crossings)
-  find_vocalizations <- function(phase, time, threshold = 0.9) {
-    signal <- sin(phase)
-    crossings <- which(diff(signal > threshold) == 1)
-    return(time[crossings])
-  }
-  
-  voc_times_1 <- find_vocalizations(output_df$theta1, output_df$time)
-  voc_times_2 <- find_vocalizations(output_df$theta2, output_df$time)
-  
-  return(list(
-    mechanism = "Gradual Entrainment",
-    times = output_df$time,
-    phases1 = output_df$theta1,
-    phases2 = output_df$theta2,
-    voc_times_1 = voc_times_1,
-    voc_times_2 = voc_times_2
-  ))
-}
-
-
-# ============================================================================
-# RUN BOTH SIMULATIONS
-# ============================================================================
-
-cat("\n=== SIMULATING BOTH MECHANISMS ===\n")
-cat("Both will produce alternation, but through different processes...\n\n")
-
-# Simulate reactive reset
-cat("1. Running REACTIVE RESET model...\n")
-reset_sim <- simulate_reactive_reset(
-  duration = 500,
-  freq1 = 1.0,
-  freq2 = 1.05,
-  reset_strength = 0.5
-)
-
-cat(sprintf("   Generated %d calls for Individual 1\n", length(reset_sim$voc_times_1)))
-cat(sprintf("   Generated %d calls for Individual 2\n\n", length(reset_sim$voc_times_2)))
-
-# Simulate gradual entrainment  
-cat("2. Running GRADUAL ENTRAINMENT model...\n")
-entrainment_sim <- simulate_gradual_entrainment(
-  duration = 1000,
-  freq1 = 1.0,
-  freq2 = 1.0,
-  coupling = -0.2
-)
-cat(sprintf("   Generated %d calls for Individual 1\n", length(entrainment_sim$voc_times_1)))
-cat(sprintf("   Generated %d calls for Individual 2\n\n", length(entrainment_sim$voc_times_2)))
-
-
-# ============================================================================
-# CREATE VOCALIZATION DATAFRAMES FOR VISUALIZATION
-# ============================================================================
-
-create_voc_dataframe <- function(sim_result, mechanism_name) {
-  # Add realistic durations
-  n1 <- length(sim_result$voc_times_1)
-  n2 <- length(sim_result$voc_times_2)
-  
-  durations_1 <- pmax(rnorm(n1, mean = 0.3, sd = 0.05), 0.1)
-  durations_2 <- pmax(rnorm(n2, mean = 0.3, sd = 0.05), 0.1)
-  
-  vocs <- bind_rows(
-    tibble(
-      Mechanism = mechanism_name,
-      Individual = "Individual 1",
-      StartTime = sim_result$voc_times_1,
-      Duration = durations_1
-    ),
-    tibble(
-      Mechanism = mechanism_name,
-      Individual = "Individual 2", 
-      StartTime = sim_result$voc_times_2,
-      Duration = durations_2
-    )
-  ) %>%
-    mutate(EndTime = StartTime + Duration) %>%
-    arrange(StartTime) %>%
-    mutate(Latency = c(NA, diff(StartTime)))
-  
-  return(vocs)
-}
-
-vocs_reset <- create_voc_dataframe(reset_data, "Reactive Reset")
-vocs_entrainment <- create_voc_dataframe(entrainment_sim, "Gradual Entrainment")
-
-# Combine for comparison
-all_vocs <- bind_rows(vocs_reset, vocs_entrainment)
-
-
-# ============================================================================
-# VISUALIZATION 1: THEY LOOK SIMILAR (THE SUPERFICIAL PATTERN)
-# ============================================================================
-
-cat("Creating visualizations...\n")
-
-# Plot vocalization patterns - first 30 seconds
-p_patterns <- all_vocs %>%
-  filter(StartTime < 30) %>%
-  mutate(y_pos = ifelse(Individual == "Individual 1", 1.6, 1.4)) %>%
-  ggplot() +
-  geom_rect(aes(xmin = StartTime, xmax = EndTime,
-                ymin = y_pos - 0.08, ymax = y_pos + 0.08,
-                fill = Individual), alpha = 0.7) +
-  facet_wrap(~Mechanism, ncol = 1) +
-  scale_fill_manual(values = c("Individual 1" = "#4682B4", "Individual 2" = "#FC4E07")) +
-  scale_y_continuous(breaks = c(1.4, 1.6), labels = c("Individual 2", "Individual 1")) +
-  labs(x = "Time (seconds)", y = "",
-       title = "Superficially Similar: Both Mechanisms Produce Alternation") +
-  theme_minimal() +
-  theme(
-    plot.title = element_text(size = 14, face = "bold"),
-    legend.position = "bottom",
-    strip.text = element_text(size = 12, face = "bold"),
-    panel.grid.major.y = element_blank()
-  )
-
-ggsave("mechanism_patterns.png", p_patterns, width = 12, height = 6, dpi = 300)
-cat("✓ Saved: mechanism_patterns.png\n")
-
-
-# ============================================================================
-# VISUALIZATION 2: PHASE DYNAMICS REVEAL THE DIFFERENCE
-# ============================================================================
-
-# Create phase dataframes
-phase_data <- bind_rows(
-  tibble(
-    Mechanism = "Reactive Reset",
-    Time = reset_sim$times,
-    Phase1 = reset_sim$phases1,
-    Phase2 = reset_sim$phases2
-  ) %>% filter(Time < 50),
-  tibble(
-    Mechanism = "Gradual Entrainment", 
-    Time = entrainment_sim$times,
-    Phase1 = entrainment_sim$phases1,
-    Phase2 = entrainment_sim$phases2
-  ) %>% filter(Time < 50)
-) %>%
-  mutate(PhaseDiff = (Phase1 - Phase2) %% (2*pi))
-
-p_phases <- phase_data %>%
-  ggplot(aes(x = Time, y = PhaseDiff, color = Mechanism)) +
-  geom_line(linewidth = 1) +
-  geom_hline(yintercept = pi, linetype = "dashed", color = "red") +
-  facet_wrap(~Mechanism, ncol = 1) +
-  scale_color_manual(values = c("Reactive Reset" = "#E69F00", 
-                                "Gradual Entrainment" = "#009E73")) +
-  labs(x = "Time (seconds)", 
-       y = "Phase Difference (radians)",
-       title = "Mechanism Signature: Phase Dynamics Reveal Different Processes") +
-  annotate("text", x = 25, y = pi + 0.3, 
-           label = "Target: Perfect Alternation (π)", color = "red") +
-  theme_minimal() +
-  theme(
-    plot.title = element_text(size = 14, face = "bold"),
-    legend.position = "none",
-    strip.text = element_text(size = 12, face = "bold")
-  )
-
-ggsave("mechanism_phases.png", p_phases, width = 12, height = 6, dpi = 300)
-cat("✓ Saved: mechanism_phases.png\n")
-
-
-# ============================================================================
-# KEY DIAGNOSTIC: CONVERGENCE DYNAMICS
-# ============================================================================
-
-# Calculate how phase difference evolves over time
-convergence_data <- phase_data %>%
-  group_by(Mechanism) %>%
   mutate(
-    Distance_from_target = abs(PhaseDiff - pi),
-    TimeWindow = cut(Time, breaks = seq(0, 50, by = 5))
+    PhaseDiff = (Phase1 - Phase2) %% (2*pi),
+    Mechanism = factor(Mechanism, levels = c("Entrainment", "Reactive Reset"))
   ) %>%
-  group_by(Mechanism, TimeWindow) %>%
-  summarize(
-    MeanDistance = mean(Distance_from_target),
-    SDDistance = sd(Distance_from_target),
-    .groups = "drop"
-  ) %>%
-  filter(!is.na(TimeWindow))
+  # Sample every 100th point to avoid overplotting
+  filter(row_number() %% 100 == 0)
 
-p_convergence <- convergence_data %>%
-  mutate(TimeWindow = as.numeric(TimeWindow) * 5 - 2.5) %>%
-  ggplot(aes(x = TimeWindow, y = MeanDistance, color = Mechanism)) +
-  geom_line(linewidth = 1.5) +
-  geom_point(size = 3) +
-  scale_color_manual(values = c("Reactive Reset" = "#E69F00",
-                                "Gradual Entrainment" = "#009E73")) +
-  labs(x = "Time (seconds)",
-       y = "Distance from Perfect Alternation",
-       title = "Distinguishing Signature: Different Convergence Dynamics") +
+panel_c <- polar_data %>%
+  ggplot(aes(x = PhaseDiff, fill = Mechanism)) +
+  geom_histogram(bins = 30, color = "black", linewidth = 0.3, alpha = 0.8) +
+  coord_polar(start = 0, direction = 1) +
+  scale_x_continuous(
+    breaks = seq(0, 2*pi, length.out = 9)[-9],
+    labels = c("0", "π/4", "π/2", "3π/4", "π", "5π/4", "3π/2", "7π/4"),
+    limits = c(0, 2*pi)
+  ) +
+  scale_fill_manual(values = c("Reactive Reset" = "#E69F00", 
+                               "Entrainment" = "#56B4E9")) +
+  facet_wrap(~Mechanism, ncol = 2) +
+  labs(title = "C) Phase Relationships") +
   theme_minimal() +
   theme(
-    plot.title = element_text(size = 14, face = "bold"),
-    legend.position = "bottom",
-    legend.title = element_blank()
+    plot.title = element_text(hjust = 0.5, size = 20, face = "bold", color = "black"),
+    plot.subtitle = element_text(hjust = 0.5, size = 13, color = "black"),
+    axis.text.x = element_text(size = 12, color = "black"),
+    axis.text.y = element_blank(),
+    axis.title = element_blank(),
+    legend.position = "none",
+    strip.background = element_rect(color = "white", fill = "white", linewidth = 1.5, linetype = "solid"),
+    strip.text.x = element_text(size = 15, color = "black", face = "bold"),
+    panel.grid.major = element_line(color = "gray80", linewidth = 0.5),
+    panel.grid.minor = element_blank(),
+    plot.margin = margin(t = 0.5, r = 0.5, b = 0.5, l = 0.5, unit = "cm")
   )
 
-ggsave("mechanism_convergence.png", p_convergence, width = 10, height = 6, dpi = 300)
-cat("✓ Saved: mechanism_convergence.png\n")
+panel_c
 
+# Panel D: ICI distributions showing bimodality
+ici_data <- bind_rows(
+  reset_df %>% mutate(Mechanism = "Reactive Reset"),
+  osc_df %>% mutate(Mechanism = "Entrainment")
+) %>%
+  mutate(Mechanism = factor(Mechanism, levels = c("Entrainment", "Reactive Reset")))
 
-# ============================================================================
-# SUMMARY STATISTICS
-# ============================================================================
+panel_d <- ici_data %>%
+  ggplot(aes(x = ici, fill = Mechanism)) +
+  geom_histogram(aes(y = after_stat(density)), bins = 40, alpha = 0.7, 
+                 color = "black", linewidth = 0.8) +
+  geom_density(alpha = 0.3, linewidth = 1.2) +
+  facet_wrap(~Mechanism, ncol = 1, scales = "free_y") +
+  scale_fill_manual(values = c("Reactive Reset" = "#E69F00", 
+                               "Entrainment" = "#56B4E9")) +
+  scale_x_continuous(breaks = seq(0, 2, 0.5), limits = c(0, 2)) +
+  labs(x = "Inter-Call Interval (seconds)", 
+       y = "Density",
+       title = "D) ICI Distributions: Bimodal vs. Unimodal") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 20, face = "bold", color = "black"), 
+    axis.text.x = element_text(size = 15, color = "black"),
+    axis.title.x = element_text(size = 15, color = "black"),
+    axis.text.y = element_blank(),
+    axis.title.y = element_text(size = 15, color = "black"),
+    legend.position = "none",
+    strip.background = element_rect(color = "white", fill = "white", linewidth = 1.5, linetype = "solid"),
+    strip.text.x = element_text(size = 15, color = "black", face = "bold"),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    panel.border = element_blank(),
+    panel.spacing = unit(1.5, "cm"),
+    plot.margin = margin(t = 0.5, r = 0.5, b = 0.5, l = 0.5, unit = "cm")
+  )
 
-cat("\n=== COMPARING MECHANISMS ===\n\n")
+panel_d
 
-# Calculate inter-call intervals
-calculate_statistics <- function(vocs, mechanism_name) {
-  stats <- vocs %>%
-    group_by(Individual) %>%
-    summarize(
-      mean_ICI = mean(Latency, na.rm = TRUE),
-      sd_ICI = sd(Latency, na.rm = TRUE),
-      cv_ICI = sd_ICI / mean_ICI,
-      .groups = "drop"
-    ) %>%
-    summarize(
-      Mechanism = mechanism_name,
-      mean_ICI = mean(mean_ICI),
-      mean_CV = mean(cv_ICI)
-    )
-  return(stats)
-}
-
-stats_reset <- calculate_statistics(vocs_reset, "Reactive Reset")
-stats_entrainment <- calculate_statistics(vocs_entrainment, "Gradual Entrainment")
-
-comparison <- bind_rows(stats_reset, stats_entrainment)
-
-print(comparison)
-
-cat("\nKey Observations:\n")
-cat("1. Both mechanisms produce alternation (similar mean inter-call intervals)\n")
-cat("2. But they differ in:\n")
-cat("   - Convergence speed (entrainment is gradual, reset is fast)\n")
-cat("   - Phase trajectory smoothness (entrainment smooth, reset has jumps)\n")
-cat("   - Variability patterns (different signatures)\n\n")
-
-cat("=== NEXT STEP ===\n")
-cat("Build Stan models that can distinguish which mechanism generated observed data\n")
-cat("based on these signatures.\n\n")
-
-
-# ============================================================================
-# SAVE DATA FOR STAN MODELING
-# ============================================================================
-
-# Save both datasets for Stan analysis
-saveRDS(vocs_reset, "vocs_reactive_reset.rds")
-saveRDS(vocs_entrainment, "vocs_gradual_entrainment.rds")
-saveRDS(list(reset = reset_sim, entrainment = entrainment_sim), "simulation_results.rds")
-
-cat("✓ Data saved for Stan modeling\n")
-cat("\nFiles created:\n")
-cat("  - mechanism_patterns.png (superficial similarity)\n")
-cat("  - mechanism_phases.png (phase dynamics)\n") 
-cat("  - mechanism_convergence.png (distinguishing signature)\n")
-cat("  - vocs_reactive_reset.rds (data for Stan)\n")
-cat("  - vocs_gradual_entrainment.rds (data for Stan)\n")
+full_panel<- plot_grid(panel_a,
+          panel_b,
+          panel_c,
+          panel_d,
+          ncol = 2)
+full_panel
+ggsave(plot = full_panel, file = 'full_panel.png', height = 12, width = 15)
 ```
-
 
 
 
