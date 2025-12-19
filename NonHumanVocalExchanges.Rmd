@@ -365,7 +365,7 @@ reset_sim <- simulate_reactive_reset(
   duration = 400,
   T1 = 1.0,
   T2 = 1,
-  rebound_ratio = 0.3,
+  rebound_ratio = 0.35,
   call_duration = 0.25,
   noise_sd = 0.2,
   duration_noise_sd = 0.05
@@ -617,14 +617,131 @@ panel_d <- ici_data %>%
 
 panel_d
 
-full_panel<- plot_grid(panel_a,
-          panel_b,
-          panel_c,
-          panel_d,
-          ncol = 2)
-full_panel
+full_panel_ab <- plot_grid(
+          panel_a, NULL,
+          panel_b, 
+          nrow = 1,
+          rel_widths = c(0.5, 0.05, 0.5))
+          
+full_panel_cd <- plot_grid(
+          panel_c, NULL,
+          panel_d, 
+          nrow = 1,
+          rel_widths = c(0.5, 0.05, 0.5))
+          
+full_panel <- plot_grid(
+          full_panel_ab, NULL,
+          full_panel_cd, 
+          ncol = 1,
+          rel_heights = c(0.5, 0.05, 0.5))
+
 ggsave(plot = full_panel, file = 'full_panel.png', height = 12, width = 15)
 ```
 
+
+```{r}
+
+# ============================================================================
+# CORRECTED PRC CALCULATION
+# ============================================================================
+
+calculate_prc_correct <- function(voc_times_self, voc_times_partner, baseline_T = 1.0) {
+  
+  prc_data <- tibble(
+    stimulus_phase = numeric(),
+    phase_shift = numeric()  # This is the key difference!
+  )
+  
+  for (i in 2:(length(voc_times_self)-1)) {
+    
+    cycle_start <- voc_times_self[i]
+    expected_next <- cycle_start + baseline_T  # When WOULD you call without stimulus
+    actual_next <- voc_times_self[i+1]         # When you ACTUALLY called
+    
+    # Find partner calls between your current call and your next call
+    partner_calls <- voc_times_partner[
+      voc_times_partner > cycle_start & 
+      voc_times_partner < actual_next
+    ]
+    
+    if (length(partner_calls) > 0) {
+      stimulus_time <- partner_calls[1]
+      
+      # Stimulus phase: where in your cycle (0-360°)
+      stimulus_phase <- ((stimulus_time - cycle_start) / baseline_T) * 360
+      
+      # Phase shift: difference between expected and actual
+      # Negative = advanced (called earlier), Positive = delayed (called later)
+      shift_time <- actual_next - expected_next
+      phase_shift <- (shift_time / baseline_T) * 360
+      
+      # Keep stimulus phase in -180 to 360 range
+      if (stimulus_phase > 360) stimulus_phase <- stimulus_phase - 360
+      
+      prc_data <- prc_data %>% add_row(
+        stimulus_phase = stimulus_phase,
+        phase_shift = phase_shift
+      )
+    }
+  }
+  
+  prc_data
+}
+
+# Calculate corrected PRCs
+prc_reset_corrected <- bind_rows(
+  calculate_prc_correct(reset_sim$voc_times_1, reset_sim$voc_times_2, 1.0),
+  calculate_prc_correct(reset_sim$voc_times_2, reset_sim$voc_times_1, 1.0)
+) %>% mutate(Mechanism = "Reactive Reset")
+
+prc_osc_corrected <- bind_rows(
+  calculate_prc_correct(osc_sim$voc_times_1, osc_sim$voc_times_2, 1.0),
+  calculate_prc_correct(osc_sim$voc_times_2, osc_sim$voc_times_1, 1.0)
+) %>% mutate(Mechanism = "Entrainment")
+
+prc_corrected <- bind_rows(prc_reset_corrected, prc_osc_corrected) %>%
+  mutate(Mechanism = factor(Mechanism, levels = c("Entrainment", "Reactive Reset")))
+
+# Plot: Phase SHIFT vs Stimulus Phase
+panel_c <- prc_corrected %>%
+  filter(stimulus_phase >= 0 & stimulus_phase <= 360) %>%
+  ggplot(aes(x = stimulus_phase, y = phase_shift)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray40", linewidth = 0.8) +
+  geom_point(aes(color = Mechanism), size = 2, alpha = 0.8) +
+  geom_smooth(aes(color = Mechanism, fill = Mechanism), method = "lm", formula = y ~ x, se = F, alpha = 0.8, linewidth = 1.5) +
+  scale_color_manual(values = c("Reactive Reset" = "#E69F00", 
+                                "Entrainment" = "#56B4E9")) +
+  scale_fill_manual(values = c("Reactive Reset" = "#E69F00", 
+                               "Entrainment" = "#56B4E9")) +
+  scale_x_continuous(breaks = seq(0, 360, 90)) +
+  scale_y_continuous(breaks = seq(-180, 360, 45), limits = c(-200, 400)) +
+  #facet_wrap(~Mechanism, ncol = 2) +
+  labs(x = "Stimulus Phase (°)", 
+       y = "Phase Shift (°)\n(- = advance, + = delay)",
+       title = "C) Phase Response Curves",
+       #subtitle = "How partner's call timing shifts your response"
+       ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 20, face = "bold", color = "black"),
+    plot.subtitle = element_text(hjust = 0.5, size = 13, color = "black"),
+    axis.text = element_text(size = 12, color = "black"),
+    axis.title = element_text(size = 15, color = "black"),
+    axis.title.y = element_text(size = 13, color = "black"),
+    legend.position = c(0.9, 0.2),
+    legend.title = element_blank(),
+    legend.key.size = unit(1, "lines"),
+    legend.text = element_text(size = 15),
+    legend.background = element_rect(fill = "transparent", color = NA),
+    legend.key = element_rect(fill = "transparent", color = NA),
+    strip.background = element_rect(color = "white", fill = "white", linewidth = 1.5),
+    strip.text.x = element_text(size = 15, color = "black", face = "bold"),
+    panel.grid.minor = element_blank(),
+    plot.margin = margin(t = 0.5, r = 0.5, b = 0.5, l = 0.5, unit = "cm")
+  )
+
+panel_c
+
+```
 
 
