@@ -8,67 +8,66 @@ editor_options:
 ---
 
 ```{r}
-library(ggplot2)
-library(grid)
-
 create_modeling_cycle <- function() {
-  
-  # Node positions matching original layout
   nodes <- data.frame(
     x = c(0.5, 
-          #0.45, 
           0.5, 
           0.5),
-    y = c(1.0, 
-          #0.9, 
-          0.8, 
-          0.6),
+    y = c(0.8,
+          0.6,
+          0.4),
     label = c(
       "Real World",
-      #"Empirical\nStudies",
       "Mechanistic Theory",
       "Formal Models"
-      #"Conceptual Model", 
-      #"Empirical\nFindings",
-      #"Literature\nCorpus",
-      #"Computational\nMethods"
     ),
     label_size = c(10, 10, 10)
   )
   
   # Create plot
   p <- ggplot() +
-    # Dashed arrow: Real World -> Observations
-    geom_segment(aes(x = 0.5, y = 0.97, xend = 0.5, yend = 0.85),
+    # Dashed arrow: Real World <-> Mechanistic Theory
+    geom_segment(aes(x = 0.5, y = 0.77, xend = 0.5, yend = 0.65),
                  arrow = arrow(length = unit(0.25, "cm"), type = "closed", ends = "both"),
                  linewidth = 0.8, linetype = "dashed") +
-    # Observations -> Theory
-    # Empirical Findings -> Theory (curved feedback)
-    geom_curve(aes(x = 0.47, y = 0.65, xend = 0.47, yend = 0.75),
+    
+    # Theory <-> Models curved arrows
+    geom_curve(aes(x = 0.47, y = 0.45, xend = 0.47, yend = 0.55),
                arrow = arrow(length = unit(0.25, "cm"), type = "closed"),
                linewidth = 0.8, curvature = -0.65) +
-    geom_curve(aes(x = 0.53, yend = 0.65, xend = 0.53, y = 0.75),
+    geom_curve(aes(x = 0.53, yend = 0.45, xend = 0.53, y = 0.55),
                arrow = arrow(length = unit(0.25, "cm"), type = "closed"),
                linewidth = 0.8, curvature = -0.65) +
     
-    geom_curve(aes(x = 0.86, yend = 0.53, xend = 0.86, y = 0.87),
-               #arrow = arrow(length = unit(0.25, "cm"), type = "closed"),
+    # Formal models to empirical studies
+    geom_curve(aes(x = 0.4, yend = 0.72, xend = 0.4, y = 0.4),
+               arrow = arrow(length = unit(0.25, "cm"), type = "closed"),
+               linewidth = 0.8, curvature = -0.65) +
+    
+    # Scientific Literature + mathematical frameworks
+    geom_curve(aes(x = 0.86, yend = 0.33, xend = 0.86, y = 0.67),
+               arrow = arrow(length = unit(0.25, "cm"), type = "closed", ends = "both"),
                linewidth = 0.8, curvature = -0.35) +
     
-    annotate("text", x = 0.44, y = 0.92, label = "Empirical \n  Studies", size = 4) +
-    annotate("text", x = 0.63, y = 0.7, label = "Assumptions", size = 4) +
-    annotate("text", x = 0.37, y = 0.7, label = "Quantitative\n Predictions", size = 4) +
+    # Labels
+    annotate("text", x = 0.44, y = 0.72, label = "Empirical \n  Studies", size = 4) +
+    annotate("text", x = 0.6, y = 0.5, label = "Assumptions", size = 4) +
+    annotate("text", x = 0.4, y = 0.5, label = "Quantitative\n Predictions", size = 4) +
     
-    annotate("text", x = 0.84, y = 0.5, label = "  Mathematical\n   Frameworks", size = 4) +
-    annotate("text", x = 0.84, y = 0.9, label = "Scientific\n Literature", size = 4) +
+    annotate("text", x = 0.84, y = 0.3, label = "  Mathematical\n   Frameworks", size = 4) +
+    annotate("text", x = 0.84, y = 0.7, label = "Cumulative\n Literature", size = 4) +
     
-    geom_segment(aes(x = 0.63, y = 0.6, xend = 0.8, yend = 0.5), linewidth = 0.8) +
-    geom_segment(aes(x = 0.63, y = 0.8, xend = 0.8, yend = 0.9), linewidth = 0.8) +
+    # External arrows
+    geom_segment(aes(x = 0.63, y = 0.4, xend = 0.8, yend = 0.3), linewidth = 0.8,
+                 arrow = arrow(length = unit(0.25, "cm"), type = "closed", ends = "both")) +
+    geom_segment(aes(x = 0.63, y = 0.6, xend = 0.8, yend = 0.7), linewidth = 0.8,
+                 arrow = arrow(length = unit(0.25, "cm"), type = "closed", ends = "both")) +
     
     # Node labels
     geom_text(data = nodes, aes(x = x, y = y, label = label), size = 8, lineheight = 0.9) +
+    
     # Styling
-    coord_cartesian(xlim = c(0.05, 0.95), ylim = c(0.15, 1.05)) +
+    coord_cartesian(xlim = c(0.3, 0.9), ylim = c(0.3, 0.8)) +
     theme_void() +
     theme(plot.margin = margin(10, 10, 10, 10))
   
@@ -79,7 +78,6 @@ create_modeling_cycle <- function() {
 p <- create_modeling_cycle()
 print(p)
 ggsave("modeling_cycle.png", p, width = 6, height = 7, dpi = 300, bg = "white")
-# Save
-ggsave("turnaking_cycle.png", p, width = 6, height = 8, dpi = 300, bg = "white")
 ```
+
 
