@@ -50,34 +50,37 @@ create_modeling_cycle <- function() {
                linewidth = 0.8, curvature = -0.35) +
     
     # Labels
-    annotate("text", x = 0.44, y = 0.72, label = "Empirical \n  Studies", size = 4) +
-    annotate("text", x = 0.6, y = 0.5, label = "Assumptions", size = 4) +
-    annotate("text", x = 0.4, y = 0.5, label = "Quantitative\n Predictions", size = 4) +
+    annotate("text", x = 0.44, y = 0.72, label = "Empirical \n  Studies", size = 7) +
+    annotate("text", x = 0.62, y = 0.5, label = "Assumptions", size = 7) +
+    annotate("text", x = 0.38, y = 0.5, label = "Quantitative\n Predictions", size = 7) +
     
-    annotate("text", x = 0.84, y = 0.3, label = "  Mathematical\n   Frameworks", size = 4) +
-    annotate("text", x = 0.84, y = 0.7, label = "Cumulative\n Literature", size = 4) +
+    annotate("text", x = 0.84, y = 0.3, label = "  Mathematical\n   Frameworks", size = 7) +
+    annotate("text", x = 0.84, y = 0.7, label = "Cumulative\n Literature", size = 7) +
     
     # External arrows
-    geom_segment(aes(x = 0.63, y = 0.4, xend = 0.8, yend = 0.3), linewidth = 0.8,
+    geom_segment(aes(x = 0.63, y = 0.4, xend = 0.78, yend = 0.32), linewidth = 0.8,
                  arrow = arrow(length = unit(0.25, "cm"), type = "closed", ends = "both")) +
-    geom_segment(aes(x = 0.63, y = 0.6, xend = 0.8, yend = 0.7), linewidth = 0.8,
+    geom_segment(aes(x = 0.63, y = 0.6, xend = 0.78, yend = 0.68), linewidth = 0.8,
                  arrow = arrow(length = unit(0.25, "cm"), type = "closed", ends = "both")) +
     
     # Node labels
-    geom_text(data = nodes, aes(x = x, y = y, label = label), size = 8, lineheight = 0.9) +
+    geom_text(data = nodes, aes(x = x, y = y, label = label), size = 8, lineheight = 0.9, fontface = "bold") +
     
     # Styling
     coord_cartesian(xlim = c(0.3, 0.9), ylim = c(0.3, 0.8)) +
     theme_void() +
-    theme(plot.margin = margin(10, 10, 10, 10))
+    theme(plot.margin = margin(0.1, 0.1, 0.1, 0.1))
   
   return(p)
 }
 
 # Create and save
-p <- create_modeling_cycle()
+p <- create_modeling_cycle() +
+  ggtitle('A) Cycle of Scientific Inquiry in Mechanistic Modeling') +
+  theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold", color = "black"))
 print(p)
-ggsave("modeling_cycle.png", p, width = 6, height = 7, dpi = 300, bg = "white")
+
+ggsave("ScientificProcessFramework.png", p, width = 14, height = 10, dpi = 300, bg = "white")
 ```
 
 
